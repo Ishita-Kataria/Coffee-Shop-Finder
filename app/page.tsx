@@ -1,4 +1,5 @@
 import { auth, signIn, signOut } from "@/auth"
+import CafeMapWrapper from "@/components/CafeMapWrapper"
 
 export default async function Home() {
   const session = await auth()
@@ -40,6 +41,10 @@ export default async function Home() {
           </form>
         </div>
       )}
+
+      <div style={{ marginTop: "30px" }}>
+        <CafeMapWrapper />
+      </div>
     </div>
   )
 }
