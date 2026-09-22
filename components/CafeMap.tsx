@@ -41,7 +41,6 @@ export default function CafeMap() {
       },
       (err) => {
         console.error("Location error:", err)
-        // Fallback: Delhi ka location (agar permission na mile)
         setPosition({ lat: 28.6139, lon: 77.209 })
       }
     )
@@ -53,7 +52,7 @@ export default function CafeMap() {
 
     setLoading(true)
     const { lat, lon } = position
-    const radius = 2000 // meters
+    const radius = 2000
 
     const query = `
       [out:json];
@@ -82,6 +81,22 @@ export default function CafeMap() {
       })
   }, [position])
 
+  // Step C: Café ko database mein save karo jab button click ho
+  async function handleSaveCafe(cafe: Cafe) {
+    const res = await fetch("/api/cafes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        placeId: cafe.id,
+        name: cafe.name,
+        latitude: cafe.lat,
+        longitude: cafe.lon,
+      }),
+    })
+    const saved = await res.json()
+    alert(`${saved.name} save ho gaya!`)
+  }
+
   if (!position) return <p>Location la rahe hain...</p>
 
   return (
@@ -105,7 +120,15 @@ export default function CafeMap() {
 
         {cafes.map((cafe) => (
           <Marker key={cafe.id} position={[cafe.lat, cafe.lon]}>
-            <Popup>☕ {cafe.name}</Popup>
+            <Popup>
+              <div>
+                <b>☕ {cafe.name}</b>
+                <br />
+                <button onClick={() => handleSaveCafe(cafe)}>
+                  View Details / Save
+                </button>
+              </div>
+            </Popup>
           </Marker>
         ))}
       </MapContainer>
