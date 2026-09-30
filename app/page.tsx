@@ -1,5 +1,6 @@
 import { auth, signIn, signOut } from "@/auth"
 import CafeMapWrapper from "@/components/CafeMapWrapper"
+import FavoritesList from "@/components/FavoritesList"
 
 export default async function Home() {
   const session = await auth()
@@ -45,6 +46,12 @@ export default async function Home() {
       <div style={{ marginTop: "30px" }}>
         <CafeMapWrapper />
       </div>
+
+      {session?.user && (
+        <div style={{ marginTop: "30px" }}>
+          <FavoritesList />
+        </div>
+      )}
     </div>
   )
 }

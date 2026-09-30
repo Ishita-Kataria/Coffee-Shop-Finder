@@ -123,15 +123,22 @@ export default function CafeMap() {
       .finally(() => setLoading(false))
   }, [position])
 
-  // Load the signed-in user's favorites (silently ignored if signed out)
+  // Load the signed-in user's favorites, and reload whenever they change
+  // (for example when a favorite is removed from the "My favorites" list)
   useEffect(() => {
-    fetch("/api/favorites")
-      .then((res) => (res.ok ? res.json() : []))
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then((favs: any[]) =>
-        setFavoriteIds(new Set(favs.map((f) => f.cafe.placeId as string)))
-      )
-      .catch(() => {})
+    function loadFavorites() {
+      fetch("/api/favorites")
+        .then((res) => (res.ok ? res.json() : []))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then((favs: any[]) =>
+          setFavoriteIds(new Set(favs.map((f) => f.cafe.placeId as string)))
+        )
+        .catch(() => {})
+    }
+
+    loadFavorites()
+    window.addEventListener("favorites-changed", loadFavorites)
+    return () => window.removeEventListener("favorites-changed", loadFavorites)
   }, [])
 
   // Save a cafe to the database
@@ -180,6 +187,8 @@ export default function CafeMap() {
         else next.delete(cafe.id)
         return next
       })
+      // Tell the "My favorites" list to refresh
+      window.dispatchEvent(new Event("favorites-changed"))
     } catch {
       alert("Something went wrong. Please check your connection.")
     }
