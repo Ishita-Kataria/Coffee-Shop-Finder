@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
+import CafeReviews from "@/components/CafeReviews"
 
 // Leaflet's default marker icons break in Next.js, so we point them to a CDN
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,7 +94,6 @@ export default function CafeMap() {
         return res.json()
       })
       .then((data) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const results: Cafe[] = data.elements
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .map((el: any) => ({
@@ -209,7 +209,7 @@ export default function CafeMap() {
 
         {cafes.map((cafe) => (
           <Marker key={cafe.id} position={[cafe.lat, cafe.lon]}>
-            <Popup>
+            <Popup minWidth={260}>
               <div>
                 <b>{cafe.name}</b>
                 <br />
@@ -223,6 +223,7 @@ export default function CafeMap() {
                 <button onClick={() => handleToggleFavorite(cafe)}>
                   {favoriteIds.has(cafe.id) ? "★ Favorited" : "☆ Favorite"}
                 </button>
+                <CafeReviews cafe={cafePayload(cafe)} />
               </div>
             </Popup>
           </Marker>
