@@ -68,6 +68,7 @@ export default function CafeReviews({ cafe }: { cafe: CafeData }) {
       setComment("")
       setMessage("Your review was saved.")
       await loadReviews()
+            window.dispatchEvent(new Event("reviews-changed"))
     } catch {
       setMessage("Could not save your review. Please check your connection.")
     } finally {

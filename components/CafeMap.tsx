@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
@@ -23,6 +23,8 @@ type Cafe = {
   address: string
   hasWifi: boolean | null
 }
+
+type Ratings = Record<string, { average: number; count: number }>
 
 // Fallback location (New Delhi) if the user denies location access
 const FALLBACK_POSITION = { lat: 28.6139, lon: 77.209 }
@@ -52,6 +54,12 @@ export default function CafeMap() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set())
+  const [ratings, setRatings] = useState<Ratings>({})
+
+  // Filters
+  const [search, setSearch] = useState("")
+  const [wifiOnly, setWifiOnly] = useState(false)
+  const [minRating, setMinRating] = useState(0)
 
   // Step A: get the user's current location
   useEffect(() => {
@@ -124,7 +132,6 @@ export default function CafeMap() {
   }, [position])
 
   // Load the signed-in user's favorites, and reload whenever they change
-  // (for example when a favorite is removed from the "My favorites" list)
   useEffect(() => {
     function loadFavorites() {
       fetch("/api/favorites")
@@ -140,6 +147,43 @@ export default function CafeMap() {
     window.addEventListener("favorites-changed", loadFavorites)
     return () => window.removeEventListener("favorites-changed", loadFavorites)
   }, [])
+
+  // Load average ratings (used by the minimum-rating filter),
+  // and reload whenever a review is saved
+  useEffect(() => {
+    function loadRatings() {
+      fetch("/api/ratings")
+        .then((res) => (res.ok ? res.json() : {}))
+        .then((data: Ratings) => setRatings(data))
+        .catch(() => {})
+    }
+
+    loadRatings()
+    window.addEventListener("reviews-changed", loadRatings)
+    return () => window.removeEventListener("reviews-changed", loadRatings)
+  }, [])
+
+  // Apply search + filters
+  const filteredCafes = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    return cafes.filter((cafe) => {
+      if (term && !cafe.name.toLowerCase().includes(term)) return false
+      if (wifiOnly && cafe.hasWifi !== true) return false
+      if (minRating > 0) {
+        const r = ratings[cafe.id]
+        if (!r || r.average < minRating) return false
+      }
+      return true
+    })
+  }, [cafes, search, wifiOnly, minRating, ratings])
+
+  const filtersActive = search.trim() !== "" || wifiOnly || minRating > 0
+
+  function clearFilters() {
+    setSearch("")
+    setWifiOnly(false)
+    setMinRating(0)
+  }
 
   // Save a cafe to the database
   async function handleSaveCafe(cafe: Cafe) {
@@ -198,9 +242,56 @@ export default function CafeMap() {
 
   return (
     <div>
+      <div
+        style={{
+          display: "flex",
+          gap: "12px",
+          flexWrap: "wrap",
+          alignItems: "center",
+          margin: "12px 0",
+        }}
+      >
+        <input
+          type="text"
+          placeholder="Search cafes by name"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ padding: "6px", minWidth: "220px" }}
+        />
+        <label>
+          <input
+            type="checkbox"
+            checked={wifiOnly}
+            onChange={(e) => setWifiOnly(e.target.checked)}
+          />{" "}
+          Wi-Fi only
+        </label>
+        <label>
+          Minimum rating:{" "}
+          <select
+            value={minRating}
+            onChange={(e) => setMinRating(Number(e.target.value))}
+          >
+            <option value={0}>Any</option>
+            <option value={3}>3+ stars</option>
+            <option value={4}>4+ stars</option>
+            <option value={4.5}>4.5+ stars</option>
+          </select>
+        </label>
+        {filtersActive && <button onClick={clearFilters}>Clear filters</button>}
+      </div>
+
       {loading && <p>Searching for cafes...</p>}
       {error && <p>{error}</p>}
-      {!loading && !error && <p>{cafes.length} cafes found nearby</p>}
+      {!loading && !error && (
+        <p>
+          Showing {filteredCafes.length} of {cafes.length} cafes nearby
+        </p>
+      )}
+      {!loading && !error && filtersActive && filteredCafes.length === 0 && (
+        <p>No cafes match your filters. Try clearing some of them.</p>
+      )}
+
       <MapContainer
         center={[position.lat, position.lon]}
         zoom={15}
@@ -216,7 +307,7 @@ export default function CafeMap() {
           <Popup>You are here</Popup>
         </Marker>
 
-        {cafes.map((cafe) => (
+        {filteredCafes.map((cafe) => (
           <Marker key={cafe.id} position={[cafe.lat, cafe.lon]}>
             <Popup minWidth={260}>
               <div>
