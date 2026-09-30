@@ -5,7 +5,8 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
 import L from "leaflet"
 
-// Leaflet ke default marker icons Next.js mein break ho jaate hain, isliye fix kar rahe hain
+// Leaflet's default marker icons break in Next.js, so we point them to a CDN
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 delete (L.Icon.Default.prototype as any)._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -14,11 +15,16 @@ L.Icon.Default.mergeOptions({
 })
 
 type Cafe = {
-  id: number
+  id: string // e.g. "node/123456" or "way/123456"
   name: string
   lat: number
   lon: number
+  address: string
+  hasWifi: boolean | null
 }
+
+// Fallback location (New Delhi) if the user denies location access
+const FALLBACK_POSITION = { lat: 28.6139, lon: 77.209 }
 
 function RecenterMap({ lat, lon }: { lat: number; lon: number }) {
   const map = useMap()
@@ -28,81 +34,164 @@ function RecenterMap({ lat, lon }: { lat: number; lon: number }) {
   return null
 }
 
+function cafePayload(cafe: Cafe) {
+  return {
+    placeId: cafe.id,
+    name: cafe.name,
+    address: cafe.address,
+    latitude: cafe.lat,
+    longitude: cafe.lon,
+    hasWifi: cafe.hasWifi,
+  }
+}
+
 export default function CafeMap() {
   const [position, setPosition] = useState<{ lat: number; lon: number } | null>(null)
   const [cafes, setCafes] = useState<Cafe[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set())
 
-  // Step A: User ki current location lo
+  // Step A: get the user's current location
   useEffect(() => {
+    if (!navigator.geolocation) {
+      setPosition(FALLBACK_POSITION)
+      return
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setPosition({ lat: pos.coords.latitude, lon: pos.coords.longitude })
       },
       (err) => {
         console.error("Location error:", err)
-        setPosition({ lat: 28.6139, lon: 77.209 })
+        setPosition(FALLBACK_POSITION)
       }
     )
   }, [])
 
-  // Step B: Location milne ke baad Overpass API se cafés dhoondo
+  // Step B: once we have a location, find nearby cafes using the Overpass API
   useEffect(() => {
     if (!position) return
 
     setLoading(true)
+    setError(null)
     const { lat, lon } = position
     const radius = 2000
 
     const query = `
-      [out:json];
-      node["amenity"="cafe"](around:${radius},${lat},${lon});
-      out;
+      [out:json][timeout:25];
+      nwr["amenity"="cafe"](around:${radius},${lat},${lon});
+      out center tags;
     `
 
     fetch("https://overpass-api.de/api/interpreter", {
       method: "POST",
       body: query,
     })
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`Overpass responded with ${res.status}`)
+        return res.json()
+      })
       .then((data) => {
-        const results: Cafe[] = data.elements.map((el: any) => ({
-          id: el.id,
-          name: el.tags?.name || "Unnamed Café",
-          lat: el.lat,
-          lon: el.lon,
-        }))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const results: Cafe[] = data.elements
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((el: any) => ({
+            id: `${el.type}/${el.id}`,
+            name: el.tags?.name || "Unnamed cafe",
+            lat: el.lat ?? el.center?.lat,
+            lon: el.lon ?? el.center?.lon,
+            address:
+              [
+                el.tags?.["addr:housenumber"],
+                el.tags?.["addr:street"],
+                el.tags?.["addr:city"],
+              ]
+                .filter(Boolean)
+                .join(", ") || "Address not available",
+            hasWifi: el.tags?.internet_access
+              ? el.tags.internet_access !== "no"
+              : null,
+          }))
+          .filter((c: Cafe) => c.lat != null && c.lon != null)
         setCafes(results)
-        setLoading(false)
       })
       .catch((err) => {
         console.error("Overpass API error:", err)
-        setLoading(false)
+        setError("Could not load nearby cafes. Please try again in a moment.")
       })
+      .finally(() => setLoading(false))
   }, [position])
 
-  // Step C: Café ko database mein save karo jab button click ho
+  // Load the signed-in user's favorites (silently ignored if signed out)
+  useEffect(() => {
+    fetch("/api/favorites")
+      .then((res) => (res.ok ? res.json() : []))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then((favs: any[]) =>
+        setFavoriteIds(new Set(favs.map((f) => f.cafe.placeId as string)))
+      )
+      .catch(() => {})
+  }, [])
+
+  // Save a cafe to the database
   async function handleSaveCafe(cafe: Cafe) {
-    const res = await fetch("/api/cafes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        placeId: cafe.id,
-        name: cafe.name,
-        latitude: cafe.lat,
-        longitude: cafe.lon,
-      }),
-    })
-    const saved = await res.json()
-    alert(`${saved.name} save ho gaya!`)
+    try {
+      const res = await fetch("/api/cafes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cafePayload(cafe)),
+      })
+      if (res.status === 401) {
+        alert("Please sign in to save cafes.")
+        return
+      }
+      if (!res.ok) {
+        alert("Could not save this cafe. Please try again.")
+        return
+      }
+      const saved = await res.json()
+      alert(`${saved.name} was saved.`)
+    } catch {
+      alert("Could not save this cafe. Please check your connection.")
+    }
   }
 
-  if (!position) return <p>Location la rahe hain...</p>
+  // Add or remove a cafe from the user's favorites
+  async function handleToggleFavorite(cafe: Cafe) {
+    try {
+      const res = await fetch("/api/favorites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cafePayload(cafe)),
+      })
+      if (res.status === 401) {
+        alert("Please sign in to add favorites.")
+        return
+      }
+      if (!res.ok) {
+        alert("Something went wrong. Please try again.")
+        return
+      }
+      const { favorited } = await res.json()
+      setFavoriteIds((prev) => {
+        const next = new Set(prev)
+        if (favorited) next.add(cafe.id)
+        else next.delete(cafe.id)
+        return next
+      })
+    } catch {
+      alert("Something went wrong. Please check your connection.")
+    }
+  }
+
+  if (!position) return <p>Getting your location...</p>
 
   return (
     <div>
-      {loading && <p>Cafés dhoond rahe hain...</p>}
-      <p>{cafes.length} cafés mile</p>
+      {loading && <p>Searching for cafes...</p>}
+      {error && <p>{error}</p>}
+      {!loading && !error && <p>{cafes.length} cafes found nearby</p>}
       <MapContainer
         center={[position.lat, position.lon]}
         zoom={15}
@@ -110,22 +199,29 @@ export default function CafeMap() {
       >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; OpenStreetMap contributors'
+          attribution="&copy; OpenStreetMap contributors"
         />
         <RecenterMap lat={position.lat} lon={position.lon} />
 
         <Marker position={[position.lat, position.lon]}>
-          <Popup>Tum yahan ho 📍</Popup>
+          <Popup>You are here</Popup>
         </Marker>
 
         {cafes.map((cafe) => (
           <Marker key={cafe.id} position={[cafe.lat, cafe.lon]}>
             <Popup>
               <div>
-                <b>☕ {cafe.name}</b>
+                <b>{cafe.name}</b>
                 <br />
-                <button onClick={() => handleSaveCafe(cafe)}>
-                  View Details / Save
+                <span>{cafe.address}</span>
+                <br />
+                {cafe.hasWifi !== null && (
+                  <span>{cafe.hasWifi ? "Wi-Fi available" : "No Wi-Fi"}</span>
+                )}
+                <br />
+                <button onClick={() => handleSaveCafe(cafe)}>Save cafe</button>{" "}
+                <button onClick={() => handleToggleFavorite(cafe)}>
+                  {favoriteIds.has(cafe.id) ? "★ Favorited" : "☆ Favorite"}
                 </button>
               </div>
             </Popup>
